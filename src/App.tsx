@@ -188,6 +188,16 @@ function uniqueMentionTexts(issue: AggregatedIssue) {
     });
 }
 
+function sameKeys(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const normalizedLeft = [...left].sort();
+  const normalizedRight = [...right].sort();
+  return normalizedLeft.every((key, index) => key === normalizedRight[index]);
+}
+
 function App() {
   const [screen, setScreen] = useState<Screen>("record");
   const [entries, setEntries] = useState<EntryItem[]>(() => loadEntries());
@@ -302,9 +312,22 @@ function App() {
     setIsSaving(true);
     setSaveError(null);
     if (editingId) {
-      const issues = issuesTouched
-        ? buildIssuesFromSelection(note.trim(), selectedIssueKeys)
-        : await buildIssuesForNote(note.trim(), selectedDate);
+      const currentEntry = entries.find((entry) => entry.id === editingId);
+      const trimmedNote = note.trim();
+      const currentIssueKeys = (currentEntry?.issues ?? []).map((issue) => issue.key);
+      const noteChanged = currentEntry ? currentEntry.note.trim() !== trimmedNote : true;
+      const dateChanged = currentEntry ? currentEntry.date !== selectedDate : true;
+      const issueSelectionChanged = issuesTouched && !sameKeys(currentIssueKeys, selectedIssueKeys);
+
+      const issues =
+        !noteChanged && !dateChanged
+          ? issueSelectionChanged
+            ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
+            : (currentEntry?.issues ?? [])
+          : issuesTouched
+            ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
+            : await buildIssuesForNote(trimmedNote, selectedDate);
+
       setEntries((current) =>
         current.map((entry) =>
           entry.id === editingId
@@ -312,7 +335,7 @@ function App() {
                 ...entry,
                 date: selectedDate,
                 attended: true,
-                note: note.trim(),
+                note: trimmedNote,
                 issues,
               }
             : entry,
@@ -325,16 +348,23 @@ function App() {
 
     const existing = entries.find((entry) => entry.date === selectedDate);
     if (existing) {
-      const issues = issuesTouched
-        ? buildIssuesFromSelection(note.trim(), selectedIssueKeys)
-        : await buildIssuesForNote(note.trim(), selectedDate);
+      const trimmedNote = note.trim();
+      const issues =
+        existing.note.trim() === trimmedNote
+          ? issuesTouched
+            ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
+            : (existing.issues ?? [])
+          : issuesTouched
+            ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
+            : await buildIssuesForNote(trimmedNote, selectedDate);
+
       setEntries((current) =>
         current.map((entry) =>
           entry.date === selectedDate
             ? {
                 ...entry,
                 attended: true,
-                note: note.trim(),
+                note: trimmedNote,
                 issues,
               }
             : entry,
@@ -488,7 +518,6 @@ function App() {
                 <span>日付</span>
                 <button type="button" className="date-trigger" onClick={openDatePicker}>
                   <span className="date-trigger-main">{formatDay(selectedDate)}</span>
-                  <span className="date-trigger-sub">{selectedDate}</span>
                 </button>
               </label>
 

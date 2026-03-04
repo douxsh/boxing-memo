@@ -320,23 +320,14 @@ button:active {
 .date-trigger {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   text-align: left;
 }
 
-.date-trigger-main,
-.date-trigger-sub {
-  display: block;
-}
-
 .date-trigger-main {
+  display: block;
   color: #171411;
   font-weight: 700;
-}
-
-.date-trigger-sub {
-  color: var(--ink-soft);
-  font-size: 0.88rem;
 }
 
 .memo-input {
