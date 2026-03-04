@@ -201,6 +201,8 @@ function App() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null);
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date());
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const [pickerMonth, setPickerMonth] = useState<Date>(() => new Date());
   const [leavingActiveIssueKeys, setLeavingActiveIssueKeys] = useState<string[]>([]);
   const [leavingDoneIssueKeys, setLeavingDoneIssueKeys] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -252,6 +254,7 @@ function App() {
   }, [query, selectedCalendarDate, sortedEntries]);
 
   const monthCells = useMemo(() => buildMonthDays(calendarMonth), [calendarMonth]);
+  const pickerMonthCells = useMemo(() => buildMonthDays(pickerMonth), [pickerMonth]);
 
   const entryByDate = useMemo(() => {
     const map = new Map<string, EntryItem>();
@@ -267,6 +270,8 @@ function App() {
     setSelectedIssueKeys([]);
     setIssuesTouched(false);
     setEditingId(null);
+    setIsDatePickerOpen(false);
+    setPickerMonth(new Date());
   }
 
   async function buildIssuesForNote(entryNote: string, date: string) {
@@ -406,6 +411,17 @@ function App() {
     }
   }
 
+  function openDatePicker() {
+    setPickerMonth(new Date(`${selectedDate}T00:00:00`));
+    setIsDatePickerOpen(true);
+  }
+
+  function chooseDate(date: string) {
+    setSelectedDate(date);
+    setPickerMonth(new Date(`${date}T00:00:00`));
+    setIsDatePickerOpen(false);
+  }
+
   return (
     <div className="app-shell simple">
       <header className="simple-header">
@@ -470,7 +486,10 @@ function App() {
 
               <label className="field-block">
                 <span>日付</span>
-                <input type="date" className="date-input" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} />
+                <button type="button" className="date-trigger" onClick={openDatePicker}>
+                  <span className="date-trigger-main">{formatDay(selectedDate)}</span>
+                  <span className="date-trigger-sub">{selectedDate}</span>
+                </button>
               </label>
 
               <label className="field-block">
@@ -696,12 +715,22 @@ function App() {
                   <h2>カレンダー</h2>
                 </div>
                 <div className="month-nav">
-                  <button type="button" className="text-button" onClick={() => setCalendarMonth((current) => shiftMonth(current, -1))}>
-                    前月
+                  <button
+                    type="button"
+                    className="month-arrow"
+                    aria-label="前月"
+                    onClick={() => setCalendarMonth((current) => shiftMonth(current, -1))}
+                  >
+                    ←
                   </button>
                   <span>{formatMonthLabel(calendarMonth.toISOString().slice(0, 10))}</span>
-                  <button type="button" className="text-button" onClick={() => setCalendarMonth((current) => shiftMonth(current, 1))}>
-                    次月
+                  <button
+                    type="button"
+                    className="month-arrow"
+                    aria-label="次月"
+                    onClick={() => setCalendarMonth((current) => shiftMonth(current, 1))}
+                  >
+                    →
                   </button>
                 </div>
               </div>
@@ -780,6 +809,75 @@ function App() {
           </section>
         )}
       </main>
+
+      {isDatePickerOpen && (
+        <div className="modal-backdrop" onClick={() => setIsDatePickerOpen(false)}>
+          <div
+            className="date-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="日付を選ぶ"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="date-modal-head">
+              <div>
+                <p className="section-label">日付を選ぶ</p>
+                <h2>{formatMonthLabel(pickerMonth.toISOString().slice(0, 10))}</h2>
+              </div>
+              <button type="button" className="text-button" onClick={() => setIsDatePickerOpen(false)}>
+                閉じる
+              </button>
+            </div>
+
+            <div className="month-nav modal-month-nav">
+              <button
+                type="button"
+                className="month-arrow"
+                aria-label="前月"
+                onClick={() => setPickerMonth((current) => shiftMonth(current, -1))}
+              >
+                ←
+              </button>
+              <button type="button" className="date-today-button" onClick={() => chooseDate(todayDate())}>
+                今日
+              </button>
+              <button
+                type="button"
+                className="month-arrow"
+                aria-label="次月"
+                onClick={() => setPickerMonth((current) => shiftMonth(current, 1))}
+              >
+                →
+              </button>
+            </div>
+
+            <div className="calendar-weekdays compact">
+              {["月", "火", "水", "木", "金", "土", "日"].map((day) => (
+                <span key={day}>{day}</span>
+              ))}
+            </div>
+
+            <div className="calendar-grid compact">
+              {pickerMonthCells.map((cell) => (
+                <button
+                  key={cell.key}
+                  type="button"
+                  className={`calendar-cell picker-cell ${selectedDate === cell.key ? "active" : ""}`}
+                  onClick={() => {
+                    if (!cell.dayNumber) {
+                      return;
+                    }
+                    chooseDate(cell.key);
+                  }}
+                  disabled={!cell.dayNumber}
+                >
+                  <span className="calendar-day-number">{cell.dayNumber ?? ""}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

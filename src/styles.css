@@ -243,6 +243,27 @@ button:active {
   gap: 10px;
 }
 
+.month-arrow {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  background: rgba(23, 20, 17, 0.06);
+  color: #171411;
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.date-today-button {
+  padding: 10px 16px;
+  border-radius: 999px;
+  background: rgba(228, 87, 46, 0.12);
+  color: var(--accent-dark);
+  border: 1px solid rgba(228, 87, 46, 0.18);
+}
+
 .section-head span,
 .memo-meta span {
   color: var(--ink-soft);
@@ -285,7 +306,7 @@ button:active {
   color: var(--accent-dark);
 }
 
-.date-input,
+.date-trigger,
 .memo-input,
 .search-input {
   width: 100%;
@@ -294,6 +315,28 @@ button:active {
   color: #171411;
   border-radius: 18px;
   padding: 14px 16px;
+}
+
+.date-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+
+.date-trigger-main,
+.date-trigger-sub {
+  display: block;
+}
+
+.date-trigger-main {
+  color: #171411;
+  font-weight: 700;
+}
+
+.date-trigger-sub {
+  color: var(--ink-soft);
+  font-size: 0.88rem;
 }
 
 .memo-input {
@@ -482,6 +525,12 @@ button:active {
   font-size: 0.82rem;
 }
 
+.calendar-weekdays.compact,
+.calendar-grid.compact {
+  gap: 6px;
+  margin-top: 10px;
+}
+
 .calendar-cell {
   aspect-ratio: 1 / 1;
   min-height: 52px;
@@ -514,6 +563,50 @@ button:active {
 
 .calendar-day-number {
   font-weight: 700;
+}
+
+.picker-cell {
+  min-height: 44px;
+  border-radius: 16px;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(23, 20, 17, 0.34);
+  backdrop-filter: blur(12px);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 20;
+}
+
+.date-modal {
+  width: min(100%, 420px);
+  padding: 18px;
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  background:
+    radial-gradient(circle at top right, rgba(228, 87, 46, 0.1), transparent 32%),
+    rgba(255, 252, 246, 0.96);
+  box-shadow: 0 28px 80px rgba(23, 20, 17, 0.2);
+}
+
+.date-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.date-modal-head h2 {
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+
+.modal-month-nav {
+  justify-content: space-between;
+  margin-top: 14px;
 }
 
 @keyframes issue-leave {
