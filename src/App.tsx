@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { extractIssuesLocally, extractIssuesWithAI, issueCatalog, type IssueMention } from "./issueExtraction";
+import { hasSupabaseConfig, supabase } from "./supabase";
 
 interface EntryItem {
   id: string;
@@ -21,31 +22,7 @@ interface AggregatedIssue {
   mentions: IssueMention[];
 }
 
-type Screen = "record" | "focus" | "done" | "calendar";
-
-const ENTRIES_KEY = "boxing-memo-entries";
-const ACHIEVED_KEY = "boxing-memo-achieved-issues";
-
-const SAMPLE_ENTRIES: EntryItem[] = [
-  {
-    id: "sample-1",
-    date: "2026-03-04",
-    attended: true,
-    note: "前のめりになりすぎている。ジャブの後に頭が前へ出る。",
-  },
-  {
-    id: "sample-2",
-    date: "2026-03-03",
-    attended: true,
-    note: "重心が前にある。右を打つ時に肩が開く。",
-  },
-  {
-    id: "sample-3",
-    date: "2026-03-02",
-    attended: true,
-    note: "打った後にガードを戻す。",
-  },
-];
+type Screen = "record" | "focus" | "done" | "calendar" | "settings";
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
@@ -53,34 +30,6 @@ function todayDate() {
 
 function shiftMonth(date: Date, offset: number) {
   return new Date(date.getFullYear(), date.getMonth() + offset, 1);
-}
-
-function loadEntries() {
-  const stored = localStorage.getItem(ENTRIES_KEY);
-  if (!stored) {
-    return SAMPLE_ENTRIES;
-  }
-  try {
-    return JSON.parse(stored) as EntryItem[];
-  } catch {
-    return SAMPLE_ENTRIES;
-  }
-}
-
-function loadAchieved() {
-  const stored = localStorage.getItem(ACHIEVED_KEY);
-  if (!stored) {
-    return [];
-  }
-  try {
-    return JSON.parse(stored) as string[];
-  } catch {
-    return [];
-  }
-}
-
-function createId() {
-  return Math.random().toString(36).slice(2, 10);
 }
 
 function formatDay(value: string) {
@@ -198,10 +147,47 @@ function sameKeys(left: string[], right: string[]) {
   return normalizedLeft.every((key, index) => key === normalizedRight[index]);
 }
 
+function normalizeStoredIssues(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [] as EntryItem["issues"];
+  }
+
+  return value
+    .filter((item): item is { key: string; title: string; sourceText: string } => {
+      if (!item || typeof item !== "object") {
+        return false;
+      }
+      const issue = item as { key?: unknown; title?: unknown; sourceText?: unknown };
+      return (
+        typeof issue.key === "string" &&
+        typeof issue.title === "string" &&
+        typeof issue.sourceText === "string"
+      );
+    })
+    .map((item) => ({
+      key: item.key,
+      title: item.title,
+      sourceText: item.sourceText,
+    }));
+}
+
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [authUserId, setAuthUserId] = useState("");
+  const [authUid, setAuthUid] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginPending, setLoginPending] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [nextEmail, setNextEmail] = useState("");
+  const [nextPassword, setNextPassword] = useState("");
+  const [profilePending, setProfilePending] = useState(false);
+  const [profileMessage, setProfileMessage] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [screen, setScreen] = useState<Screen>("record");
-  const [entries, setEntries] = useState<EntryItem[]>(() => loadEntries());
-  const [achievedIssueKeys, setAchievedIssueKeys] = useState<string[]>(() => loadAchieved());
+  const [entries, setEntries] = useState<EntryItem[]>([]);
+  const [achievedIssueKeys, setAchievedIssueKeys] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState(todayDate());
   const [note, setNote] = useState("");
   const [selectedIssueKeys, setSelectedIssueKeys] = useState<string[]>([]);
@@ -215,19 +201,71 @@ function App() {
   const [pickerMonth, setPickerMonth] = useState<Date>(() => new Date());
   const [leavingActiveIssueKeys, setLeavingActiveIssueKeys] = useState<string[]>([]);
   const [leavingDoneIssueKeys, setLeavingDoneIssueKeys] = useState<string[]>([]);
+  const [isDataLoading, setIsDataLoading] = useState(false);
+  const [dataError, setDataError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
-  const tabOrder: Screen[] = ["record", "focus", "done", "calendar"];
+  const tabOrder: Screen[] = ["record", "focus", "done", "calendar", "settings"];
   const activeTabIndex = tabOrder.indexOf(screen);
 
   useEffect(() => {
-    localStorage.setItem(ENTRIES_KEY, JSON.stringify(entries));
-  }, [entries]);
+    let cancelled = false;
 
-  useEffect(() => {
-    localStorage.setItem(ACHIEVED_KEY, JSON.stringify(achievedIssueKeys));
-  }, [achievedIssueKeys]);
+    async function loadSession() {
+      try {
+        if (!supabase) {
+          setIsAuthenticated(false);
+          setAuthUserId("");
+          return;
+        }
+
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (cancelled) {
+          return;
+        }
+
+        setIsAuthenticated(Boolean(session));
+        setAuthUserId(session?.user.email ?? "");
+        setAuthUid(session?.user.id ?? "");
+      } catch {
+        if (!cancelled) {
+          setIsAuthenticated(false);
+          setAuthUserId("");
+          setAuthUid("");
+        }
+      } finally {
+        if (!cancelled) {
+          setAuthChecking(false);
+        }
+      }
+    }
+
+    loadSession();
+    if (!supabase) {
+      setAuthChecking(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!cancelled) {
+        setIsAuthenticated(Boolean(session));
+        setAuthUserId(session?.user.email ?? "");
+        setAuthUid(session?.user.id ?? "");
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     if (editingId && inputRef.current) {
@@ -274,6 +312,48 @@ function App() {
     return map;
   }, [entries]);
 
+  const loadUserData = useCallback(async () => {
+    if (!supabase || !isAuthenticated || !authUid) {
+      setEntries([]);
+      setAchievedIssueKeys([]);
+      return;
+    }
+
+    setIsDataLoading(true);
+    setDataError(null);
+
+    const [{ data: entryRows, error: entryError }, { data: achievedRows, error: achievedError }] = await Promise.all([
+      supabase
+        .from("boxing_entries")
+        .select("id, entry_date, note, issues")
+        .eq("user_id", authUid)
+        .order("entry_date", { ascending: false }),
+      supabase.from("boxing_achieved_issues").select("issue_key").eq("user_id", authUid),
+    ]);
+
+    if (entryError || achievedError) {
+      setDataError("DBの読み込みに失敗しました。テーブル作成とRLS設定を確認してください。");
+      setIsDataLoading(false);
+      return;
+    }
+
+    const mappedEntries = (entryRows ?? []).map((row) => ({
+      id: row.id as string,
+      date: row.entry_date as string,
+      attended: true,
+      note: (row.note as string) ?? "",
+      issues: normalizeStoredIssues(row.issues),
+    }));
+
+    setEntries(mappedEntries);
+    setAchievedIssueKeys((achievedRows ?? []).map((row) => row.issue_key as string));
+    setIsDataLoading(false);
+  }, [authUid, isAuthenticated]);
+
+  useEffect(() => {
+    void loadUserData();
+  }, [loadUserData]);
+
   function resetForm() {
     setSelectedDate(todayDate());
     setNote("");
@@ -309,86 +389,104 @@ function App() {
   }
 
   async function saveEntry() {
+    if (!supabase || !authUid) {
+      setSaveError("ログイン情報を確認してください。");
+      return;
+    }
+
     setIsSaving(true);
     setSaveError(null);
-    if (editingId) {
-      const currentEntry = entries.find((entry) => entry.id === editingId);
+
+    try {
+      if (editingId) {
+        const currentEntry = entries.find((entry) => entry.id === editingId);
+        const trimmedNote = note.trim();
+        const currentIssueKeys = (currentEntry?.issues ?? []).map((issue) => issue.key);
+        const noteChanged = currentEntry ? currentEntry.note.trim() !== trimmedNote : true;
+        const dateChanged = currentEntry ? currentEntry.date !== selectedDate : true;
+        const issueSelectionChanged = issuesTouched && !sameKeys(currentIssueKeys, selectedIssueKeys);
+
+        const issues =
+          !noteChanged && !dateChanged
+            ? issueSelectionChanged
+              ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
+              : (currentEntry?.issues ?? [])
+            : issuesTouched
+              ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
+              : await buildIssuesForNote(trimmedNote, selectedDate);
+
+        const { error } = await supabase
+          .from("boxing_entries")
+          .update({
+            entry_date: selectedDate,
+            note: trimmedNote,
+            issues,
+          })
+          .eq("id", editingId)
+          .eq("user_id", authUid);
+
+        if (error) {
+          throw error;
+        }
+
+        await loadUserData();
+        resetForm();
+        return;
+      }
+
+      const existing = entries.find((entry) => entry.date === selectedDate);
+      if (existing) {
+        const trimmedNote = note.trim();
+        const issues =
+          existing.note.trim() === trimmedNote
+            ? issuesTouched
+              ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
+              : (existing.issues ?? [])
+            : issuesTouched
+              ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
+              : await buildIssuesForNote(trimmedNote, selectedDate);
+
+        const { error } = await supabase
+          .from("boxing_entries")
+          .update({
+            note: trimmedNote,
+            issues,
+          })
+          .eq("id", existing.id)
+          .eq("user_id", authUid);
+
+        if (error) {
+          throw error;
+        }
+
+        await loadUserData();
+        resetForm();
+        return;
+      }
+
       const trimmedNote = note.trim();
-      const currentIssueKeys = (currentEntry?.issues ?? []).map((issue) => issue.key);
-      const noteChanged = currentEntry ? currentEntry.note.trim() !== trimmedNote : true;
-      const dateChanged = currentEntry ? currentEntry.date !== selectedDate : true;
-      const issueSelectionChanged = issuesTouched && !sameKeys(currentIssueKeys, selectedIssueKeys);
+      const issues = issuesTouched
+        ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
+        : await buildIssuesForNote(trimmedNote, selectedDate);
 
-      const issues =
-        !noteChanged && !dateChanged
-          ? issueSelectionChanged
-            ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
-            : (currentEntry?.issues ?? [])
-          : issuesTouched
-            ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
-            : await buildIssuesForNote(trimmedNote, selectedDate);
+      const { error } = await supabase.from("boxing_entries").insert({
+        user_id: authUid,
+        entry_date: selectedDate,
+        note: trimmedNote,
+        issues,
+      });
 
-      setEntries((current) =>
-        current.map((entry) =>
-          entry.id === editingId
-            ? {
-                ...entry,
-                date: selectedDate,
-                attended: true,
-                note: trimmedNote,
-                issues,
-              }
-            : entry,
-        ),
-      );
+      if (error) {
+        throw error;
+      }
+
+      await loadUserData();
       resetForm();
+    } catch {
+      setSaveError("保存に失敗しました。DB設定を確認してください。");
+    } finally {
       setIsSaving(false);
-      return;
     }
-
-    const existing = entries.find((entry) => entry.date === selectedDate);
-    if (existing) {
-      const trimmedNote = note.trim();
-      const issues =
-        existing.note.trim() === trimmedNote
-          ? issuesTouched
-            ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
-            : (existing.issues ?? [])
-          : issuesTouched
-            ? buildIssuesFromSelection(trimmedNote, selectedIssueKeys)
-            : await buildIssuesForNote(trimmedNote, selectedDate);
-
-      setEntries((current) =>
-        current.map((entry) =>
-          entry.date === selectedDate
-            ? {
-                ...entry,
-                attended: true,
-                note: trimmedNote,
-                issues,
-              }
-            : entry,
-        ),
-      );
-      resetForm();
-      setIsSaving(false);
-      return;
-    }
-
-    const issues = issuesTouched
-      ? buildIssuesFromSelection(note.trim(), selectedIssueKeys)
-      : await buildIssuesForNote(note.trim(), selectedDate);
-    const nextEntry: EntryItem = {
-      id: createId(),
-      date: selectedDate,
-      attended: true,
-      note: note.trim(),
-      issues,
-    };
-
-    setEntries((current) => [nextEntry, ...current]);
-    resetForm();
-    setIsSaving(false);
   }
 
   function startEdit(entry: EntryItem) {
@@ -414,8 +512,30 @@ function App() {
     }
     setLeavingActiveIssueKeys((current) => [...current, issueKey]);
     window.setTimeout(() => {
-      setAchievedIssueKeys((current) => (current.includes(issueKey) ? current : [...current, issueKey]));
-      setLeavingActiveIssueKeys((current) => current.filter((key) => key !== issueKey));
+      void (async () => {
+        if (!supabase || !authUid) {
+          setSaveError("ログイン情報を確認してください。");
+          setLeavingActiveIssueKeys((current) => current.filter((key) => key !== issueKey));
+          return;
+        }
+
+        const { error } = await supabase.from("boxing_achieved_issues").upsert(
+          {
+            user_id: authUid,
+            issue_key: issueKey,
+          },
+          { onConflict: "user_id,issue_key" },
+        );
+
+        if (error) {
+          setSaveError("達成状態の保存に失敗しました。");
+          setLeavingActiveIssueKeys((current) => current.filter((key) => key !== issueKey));
+          return;
+        }
+
+        setAchievedIssueKeys((current) => (current.includes(issueKey) ? current : [...current, issueKey]));
+        setLeavingActiveIssueKeys((current) => current.filter((key) => key !== issueKey));
+      })();
     }, 280);
   }
 
@@ -425,16 +545,48 @@ function App() {
     }
     setLeavingDoneIssueKeys((current) => [...current, issueKey]);
     window.setTimeout(() => {
-      setAchievedIssueKeys((current) => current.filter((key) => key !== issueKey));
-      setLeavingDoneIssueKeys((current) => current.filter((key) => key !== issueKey));
+      void (async () => {
+        if (!supabase || !authUid) {
+          setSaveError("ログイン情報を確認してください。");
+          setLeavingDoneIssueKeys((current) => current.filter((key) => key !== issueKey));
+          return;
+        }
+
+        const { error } = await supabase
+          .from("boxing_achieved_issues")
+          .delete()
+          .eq("user_id", authUid)
+          .eq("issue_key", issueKey);
+
+        if (error) {
+          setSaveError("達成状態の更新に失敗しました。");
+          setLeavingDoneIssueKeys((current) => current.filter((key) => key !== issueKey));
+          return;
+        }
+
+        setAchievedIssueKeys((current) => current.filter((key) => key !== issueKey));
+        setLeavingDoneIssueKeys((current) => current.filter((key) => key !== issueKey));
+      })();
     }, 280);
   }
 
-  function deleteEntry(id: string) {
+  async function deleteEntry(id: string) {
     const shouldDelete = window.confirm("この記録を削除しますか？");
     if (!shouldDelete) {
       return;
     }
+
+    if (!supabase || !authUid) {
+      setSaveError("ログイン情報を確認してください。");
+      return;
+    }
+
+    const { error } = await supabase.from("boxing_entries").delete().eq("id", id).eq("user_id", authUid);
+    if (error) {
+      setSaveError("削除に失敗しました。");
+      return;
+    }
+
     setEntries((current) => current.filter((entry) => entry.id !== id));
     if (editingId === id) {
       resetForm();
@@ -452,30 +604,175 @@ function App() {
     setIsDatePickerOpen(false);
   }
 
+  async function submitLogin(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoginPending(true);
+    setLoginError(null);
+
+    try {
+      if (!supabase) {
+        setLoginError("Supabase設定が不足しています");
+        setLoginPending(false);
+        return;
+      }
+
+      const { error } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: loginPassword,
+      });
+
+      if (error) {
+        setLoginError("ログインに失敗しました。メールアドレスとパスワードを確認してください。");
+        setLoginPending(false);
+        return;
+      }
+
+      setIsAuthenticated(true);
+      setAuthUserId(loginEmail);
+      setLoginPassword("");
+      setLoginPending(false);
+    } catch {
+      setLoginError("ログインに失敗しました");
+      setLoginPending(false);
+    }
+  }
+
+  async function logout() {
+    if (!supabase) {
+      return;
+    }
+
+    await supabase.auth.signOut();
+    setIsAuthenticated(false);
+    setAuthUserId("");
+    setAuthUid("");
+    setEntries([]);
+    setAchievedIssueKeys([]);
+    setLoginPassword("");
+    setNextEmail("");
+    setNextPassword("");
+    setProfileMessage(null);
+    setProfileError(null);
+  }
+
+  async function updateEmail(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase || !nextEmail.trim()) {
+      return;
+    }
+
+    setProfilePending(true);
+    setProfileMessage(null);
+    setProfileError(null);
+
+    const { error } = await supabase.auth.updateUser({ email: nextEmail.trim() });
+    if (error) {
+      setProfileError("メールアドレス変更に失敗しました。");
+      setProfilePending(false);
+      return;
+    }
+
+    setProfileMessage("確認メールを送信しました。メール内リンクで変更を確定してください。");
+    setProfilePending(false);
+  }
+
+  async function updatePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase || !nextPassword.trim()) {
+      return;
+    }
+
+    setProfilePending(true);
+    setProfileMessage(null);
+    setProfileError(null);
+
+    const { error } = await supabase.auth.updateUser({ password: nextPassword });
+    if (error) {
+      setProfileError("パスワード変更に失敗しました。");
+      setProfilePending(false);
+      return;
+    }
+
+    setNextPassword("");
+    setProfileMessage("パスワードを更新しました。");
+    setProfilePending(false);
+  }
+
+  if (authChecking) {
+    return (
+      <div className="auth-shell">
+        <section className="auth-card">
+          <p className="eyebrow">BOXING MEMO</p>
+          <h1>認証を確認しています</h1>
+        </section>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="auth-shell">
+        <section className="auth-card">
+          <p className="eyebrow">BOXING MEMO</p>
+          <h1>ログイン</h1>
+          <p className="auth-copy">
+            {hasSupabaseConfig
+              ? "既存アカウントのみ利用できます。新規登録はできません。"
+              : "環境変数 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY を設定してください。"}
+          </p>
+
+          <form className="auth-form" onSubmit={submitLogin}>
+            <label className="field-block">
+              <span>メールアドレス</span>
+              <input
+                className="auth-input"
+                type="email"
+                value={loginEmail}
+                onChange={(event) => setLoginEmail(event.target.value)}
+                autoComplete="email"
+                required
+              />
+            </label>
+            <label className="field-block">
+              <span>パスワード</span>
+              <input
+                className="auth-input"
+                type="password"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </label>
+            {loginError && <p className="inline-error">{loginError}</p>}
+            <button type="submit" className="primary-button full-width" disabled={loginPending || !hasSupabaseConfig}>
+              {loginPending ? "ログイン中..." : "ログイン"}
+            </button>
+          </form>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell simple">
       <header className="simple-header">
-        <div>
-          <p className="eyebrow">BOXING MEMO</p>
-          <h1>練習記録</h1>
-          <p className="header-copy">書いたメモは自動でまとめて、意識中に集約されます。達成したら外します。</p>
+        <div className="hero-surface">
+          <p className="hero-badge">BOXING MEMO</p>
+          <h1 className="hero-title">あなた専用の練習ログ</h1>
+          <p className="hero-copy">
+            今日の指摘を記録して、意識中へ自動集約。積み上げを見える化して、達成まで追える設計です。
+          </p>
         </div>
-        <button
-          type="button"
-          className="ghost-button"
-          onClick={() => {
-            setEntries(SAMPLE_ENTRIES);
-            setAchievedIssueKeys([]);
-          }}
-        >
-          サンプルに戻す
-        </button>
       </header>
 
-      <nav className="main-tabs four">
+      <nav className="main-tabs">
         <span
           className="tab-indicator"
-          style={{ transform: `translateX(${activeTabIndex * 100}%)` }}
+          style={{
+            width: `calc((100% - 12px) / ${tabOrder.length})`,
+            transform: `translateX(${activeTabIndex * 100}%)`,
+          }}
         />
         <button type="button" className={screen === "record" ? "active" : ""} onClick={() => setScreen("record")}>
           記録
@@ -489,9 +786,23 @@ function App() {
         <button type="button" className={screen === "calendar" ? "active" : ""} onClick={() => setScreen("calendar")}>
           カレンダー
         </button>
+        <button type="button" className={screen === "settings" ? "active" : ""} onClick={() => setScreen("settings")}>
+          設定
+        </button>
       </nav>
 
       <main className="single-screen">
+        {dataError && (
+          <section className="list-card">
+            <p className="inline-error">{dataError}</p>
+          </section>
+        )}
+        {isDataLoading && (
+          <section className="list-card">
+            <p className="section-label">読み込み中</p>
+            <p>DBからデータを取得しています。</p>
+          </section>
+        )}
         {screen === "record" && (
           <section className="screen-panel record-panel">
             <section className="composer-card">
@@ -834,6 +1145,71 @@ function App() {
                   ))
                 )}
               </div>
+            </section>
+          </section>
+        )}
+
+        {screen === "settings" && (
+          <section className="screen-panel full-panel">
+            <section className="list-card settings-card">
+              <div className="section-head">
+                <div>
+                  <p className="section-label">アカウント管理</p>
+                  <h2>設定</h2>
+                </div>
+              </div>
+
+              <div className="settings-grid">
+                <article className="settings-block">
+                  <h3>ログイン情報</h3>
+                  <p className="settings-current">{authUserId}</p>
+                </article>
+
+                <article className="settings-block">
+                  <h3>メールアドレス変更</h3>
+                  <form onSubmit={updateEmail} className="settings-form">
+                    <input
+                      className="auth-input"
+                      type="email"
+                      placeholder="新しいメールアドレス"
+                      value={nextEmail}
+                      onChange={(event) => setNextEmail(event.target.value)}
+                      required
+                    />
+                    <button type="submit" className="primary-button" disabled={profilePending}>
+                      変更メールを送る
+                    </button>
+                  </form>
+                </article>
+
+                <article className="settings-block">
+                  <h3>パスワード変更</h3>
+                  <form onSubmit={updatePassword} className="settings-form">
+                    <input
+                      className="auth-input"
+                      type="password"
+                      placeholder="新しいパスワード"
+                      value={nextPassword}
+                      onChange={(event) => setNextPassword(event.target.value)}
+                      required
+                      minLength={8}
+                    />
+                    <button type="submit" className="primary-button" disabled={profilePending}>
+                      パスワードを更新
+                    </button>
+                  </form>
+                </article>
+
+                <article className="settings-block">
+                  <h3>セッション</h3>
+                  <button type="button" className="action-button subtle" onClick={logout}>
+                    ログアウト
+                  </button>
+                </article>
+              </div>
+
+              {profileMessage && <p className="success-copy">{profileMessage}</p>}
+              {profileError && <p className="inline-error">{profileError}</p>}
             </section>
           </section>
         )}

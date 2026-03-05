@@ -1,3 +1,5 @@
+import { supabase } from "./supabase";
+
 export interface IssueMention {
   key: string;
   title: string;
@@ -73,10 +75,24 @@ export function extractIssuesLocally(note: string, date: string): IssueMention[]
 
 export async function extractIssuesWithAI(note: string, date: string): Promise<IssueMention[] | null> {
   try {
+    if (!supabase) {
+      return null;
+    }
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    const accessToken = session?.access_token;
+    if (!accessToken) {
+      return null;
+    }
+
     const response = await fetch("/api/extract-issues", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ note }),
     });

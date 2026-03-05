@@ -54,6 +54,48 @@ button:active {
   padding: 20px 16px 40px;
 }
 
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px 16px;
+}
+
+.auth-card {
+  width: min(100%, 420px);
+  border: 1px solid var(--line);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  padding: 22px;
+}
+
+.auth-card h1 {
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+
+.auth-copy {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+}
+
+.auth-form {
+  margin-top: 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.auth-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 14px;
+  padding: 11px 12px;
+  color: #171411;
+}
+
 .simple-header,
 .main-tabs,
 .single-screen {
@@ -62,11 +104,47 @@ button:active {
 }
 
 .simple-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
+}
+
+.hero-surface {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(23, 20, 17, 0.1);
+  background:
+    radial-gradient(circle at 85% 15%, rgba(228, 87, 46, 0.2), transparent 34%),
+    linear-gradient(120deg, rgba(255, 255, 255, 0.92), rgba(255, 252, 246, 0.82));
+  border-radius: 28px;
+  box-shadow: var(--shadow);
+  padding: 24px 24px 22px;
+}
+
+.hero-badge {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 7px 11px;
+  background: rgba(23, 20, 17, 0.08);
+  color: #3a332d;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-title {
+  margin: 12px 0 0;
+  font-size: clamp(2rem, 6vw, 3rem);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+}
+
+.hero-copy {
+  margin: 12px 0 0;
+  max-width: 46rem;
+  color: #564d45;
+  line-height: 1.7;
 }
 
 .eyebrow,
@@ -78,24 +156,11 @@ button:active {
   font-size: 0.72rem;
 }
 
-.simple-header h1,
 .composer-card h2,
 .focus-card h2,
 .list-card h2 {
   margin: 0;
   letter-spacing: -0.04em;
-}
-
-.simple-header h1 {
-  font-size: clamp(2rem, 6vw, 3rem);
-  line-height: 1;
-}
-
-.header-copy {
-  margin: 10px 0 0;
-  max-width: 34rem;
-  color: var(--ink-soft);
-  line-height: 1.6;
 }
 
 .ghost-button,
@@ -139,9 +204,9 @@ button:active {
 .main-tabs {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
-  margin-bottom: 14px;
+  margin-bottom: 18px;
   padding: 6px;
   border-radius: 20px;
   background: rgba(255, 252, 246, 0.92);
@@ -149,15 +214,11 @@ button:active {
   box-shadow: var(--shadow);
 }
 
-.main-tabs.four {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
 .tab-indicator {
   position: absolute;
   top: 6px;
   left: 6px;
-  width: calc((100% - 12px) / 4);
+  width: calc((100% - 12px) / 5);
   height: calc(100% - 12px);
   border-radius: 16px;
   background: #171411;
@@ -178,6 +239,8 @@ button:active {
   border-radius: 16px;
   background: transparent;
   color: var(--ink-soft);
+  white-space: nowrap;
+  font-size: 0.9rem;
   transition:
     color 220ms ease,
     transform 160ms ease,
@@ -306,6 +369,11 @@ button:active {
   color: var(--accent-dark);
 }
 
+.success-copy {
+  margin: 12px 0 0;
+  color: var(--green);
+}
+
 .date-trigger,
 .memo-input,
 .search-input {
@@ -392,6 +460,40 @@ button:active {
 
 .achieved-grid {
   grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+.settings-card {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-grid {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.settings-block {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 14px;
+}
+
+.settings-block h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.settings-current {
+  margin: 8px 0 0;
+  color: #3f3933;
+}
+
+.settings-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .memo-card,
@@ -619,6 +721,55 @@ button:active {
     padding-top: 0;
     padding-bottom: 0;
     border-width: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .hero-surface {
+    padding: 20px 18px;
+  }
+
+  .main-tabs button {
+    padding: 11px 6px;
+    font-size: 0.78rem;
+  }
+
+  .calendar-panel .list-card {
+    padding: 14px;
+  }
+
+  .month-nav {
+    gap: 6px;
+  }
+
+  .month-nav span {
+    font-size: 1rem;
+  }
+
+  .month-arrow {
+    width: 34px;
+    height: 34px;
+    font-size: 0.92rem;
+  }
+
+  .calendar-weekdays,
+  .calendar-grid {
+    gap: 6px;
+    margin-top: 12px;
+  }
+
+  .calendar-weekdays span {
+    font-size: 0.76rem;
+  }
+
+  .calendar-cell {
+    min-height: 44px;
+    border-radius: 14px;
+    padding: 6px 4px;
+  }
+
+  .calendar-day-number {
+    font-size: 1rem;
   }
 }
 

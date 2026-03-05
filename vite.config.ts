@@ -1,4 +1,5 @@
-import { defineConfig, loadEnv, type Plugin } from "vite";
+import { createRemoteJWKSet, jwtVerify } from "jose";
+import { defineConfig, loadEnv, type Connect, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 
 function extractTextFromResponse(payload: unknown) {
@@ -14,45 +15,121 @@ function extractTextFromResponse(payload: unknown) {
     .join("");
 }
 
-function openAIExtractionPlugin(): Plugin {
+function sendJson(res: Connect.ServerResponse, statusCode: number, body: unknown) {
+  res.statusCode = statusCode;
+  res.setHeader("Content-Type", "application/json");
+  res.end(JSON.stringify(body));
+}
+
+function parseJsonBody(req: Connect.IncomingMessage) {
+  return new Promise<unknown>((resolve, reject) => {
+    let rawBody = "";
+
+    req.on("data", (chunk) => {
+      rawBody += chunk;
+    });
+
+    req.on("end", () => {
+      if (!rawBody) {
+        resolve({});
+        return;
+      }
+
+      try {
+        resolve(JSON.parse(rawBody) as unknown);
+      } catch {
+        reject(new Error("Invalid JSON body"));
+      }
+    });
+
+    req.on("error", (error) => {
+      reject(error);
+    });
+  });
+}
+
+function extractBearerToken(req: Connect.IncomingMessage) {
+  const authorization = req.headers.authorization;
+  if (!authorization || !authorization.startsWith("Bearer ")) {
+    return null;
+  }
+
+  return authorization.slice("Bearer ".length).trim() || null;
+}
+
+function supabaseAuthGuard(mode: string) {
+  const env = loadEnv(mode, process.cwd(), "");
+  const supabaseUrl = env.VITE_SUPABASE_URL?.trim();
+  const requiredAudience = env.SUPABASE_JWT_AUD?.trim() || "authenticated";
+
+  if (!supabaseUrl) {
+    return {
+      verify: async () => ({ ok: false as const, reason: "VITE_SUPABASE_URL is not set" }),
+    };
+  }
+
+  const normalizedUrl = supabaseUrl.replace(/\/$/, "");
+  const jwks = createRemoteJWKSet(new URL(`${normalizedUrl}/auth/v1/.well-known/jwks.json`));
+
   return {
-    name: "openai-extraction-api",
-    configureServer(server) {
-      server.middlewares.use("/api/extract-issues", async (req, res, next) => {
-        if (req.method !== "POST") {
-          next();
-          return;
-        }
-
-        const env = loadEnv(server.config.mode, process.cwd(), "");
-        const apiKey = env.OPENAI_API_KEY;
-        const model = env.OPENAI_MODEL || "gpt-4.1-nano";
-
-        if (!apiKey) {
-          res.statusCode = 503;
-          res.setHeader("Content-Type", "application/json");
-          res.end(JSON.stringify({ error: "OPENAI_API_KEY is not set" }));
-          return;
-        }
-
-        let body = "";
-        req.on("data", (chunk) => {
-          body += chunk;
+    verify: async (token: string) => {
+      try {
+        await jwtVerify(token, jwks, {
+          issuer: `${normalizedUrl}/auth/v1`,
+          audience: requiredAudience,
         });
+        return { ok: true as const };
+      } catch {
+        return { ok: false as const, reason: "invalid token" };
+      }
+    },
+  };
+}
 
-        req.on("end", async () => {
-          try {
-            const parsed = JSON.parse(body) as { note?: string };
-            const note = parsed.note?.trim();
+function openAIExtractionPlugin(): Plugin {
+  function attach(middlewares: Connect.Server, mode: string) {
+    const authGuard = supabaseAuthGuard(mode);
 
-            if (!note) {
-              res.statusCode = 200;
-              res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ issues: [] }));
-              return;
-            }
+    middlewares.use("/api/extract-issues", async (req, res, next) => {
+      if (req.method !== "POST") {
+        next();
+        return;
+      }
 
-            const prompt = `
+      const token = extractBearerToken(req);
+      if (!token) {
+        sendJson(res, 401, { error: "ログインしてください" });
+        return;
+      }
+
+      const authResult = await authGuard.verify(token);
+      if (!authResult.ok) {
+        const statusCode = authResult.reason === "VITE_SUPABASE_URL is not set" ? 503 : 401;
+        sendJson(res, statusCode, {
+          error: authResult.reason === "VITE_SUPABASE_URL is not set" ? authResult.reason : "認証に失敗しました",
+        });
+        return;
+      }
+
+      const env = loadEnv(mode, process.cwd(), "");
+      const apiKey = env.OPENAI_API_KEY;
+      const model = env.OPENAI_MODEL || "gpt-4.1-nano";
+
+      if (!apiKey) {
+        sendJson(res, 503, { error: "OPENAI_API_KEY is not set" });
+        return;
+      }
+
+      try {
+        const parsed = (await parseJsonBody(req)) as { note?: string };
+        const note = parsed.note?.trim();
+
+        if (!note) {
+          sendJson(res, 200, { issues: [] });
+          return;
+        }
+
+        const prompt = `
 You classify boxing coaching feedback into one or more issue items.
 
 Rules:
@@ -75,49 +152,49 @@ Output schema:
 
 Feedback:
 ${note}
-            `.trim();
+        `.trim();
 
-            const response = await fetch("https://api.openai.com/v1/responses", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${apiKey}`,
-              },
-              body: JSON.stringify({
-                model,
-                store: false,
-                input: prompt,
-              }),
-            });
-
-            if (!response.ok) {
-              const errorText = await response.text();
-              res.statusCode = response.status;
-              res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ error: errorText }));
-              return;
-            }
-
-            const payload = (await response.json()) as unknown;
-            const text = extractTextFromResponse(payload);
-            const parsedOutput = JSON.parse(text) as {
-              issues?: Array<{ key: string; title: string; sourceText: string }>;
-            };
-
-            res.statusCode = 200;
-            res.setHeader("Content-Type", "application/json");
-            res.end(JSON.stringify({ issues: parsedOutput.issues ?? [] }));
-          } catch (error) {
-            res.statusCode = 500;
-            res.setHeader("Content-Type", "application/json");
-            res.end(
-              JSON.stringify({
-                error: error instanceof Error ? error.message : "Unknown error",
-              }),
-            );
-          }
+        const response = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            store: false,
+            input: prompt,
+          }),
         });
-      });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          sendJson(res, response.status, { error: errorText });
+          return;
+        }
+
+        const payload = (await response.json()) as unknown;
+        const text = extractTextFromResponse(payload);
+        const parsedOutput = JSON.parse(text) as {
+          issues?: Array<{ key: string; title: string; sourceText: string }>;
+        };
+
+        sendJson(res, 200, { issues: parsedOutput.issues ?? [] });
+      } catch (error) {
+        sendJson(res, 500, {
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      }
+    });
+  }
+
+  return {
+    name: "openai-extraction-api",
+    configureServer(server) {
+      attach(server.middlewares, server.config.mode);
+    },
+    configurePreviewServer(server) {
+      attach(server.middlewares, server.config.mode);
     },
   };
 }
